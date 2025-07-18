@@ -1,0 +1,10 @@
+# Ignore data files and folders
+files naive/
+*.csv
+*.xlsx
+*.docx
+
+# Ignore Jupyter and Python cache
+__pycache__/
+*.pyc
+*.ipynb_checkpoints/
