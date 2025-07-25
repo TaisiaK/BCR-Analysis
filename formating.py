@@ -4,15 +4,11 @@ from io import BytesIO
 from openpyxl.drawing.image import Image
 import re
 import seaborn as sns
-from statsmodels.stats.proportion import proportions_ztest
-from statsmodels.stats.multitest import multipletests
-from scipy.stats import hypergeom
-import numpy as np
 import pandas as pd 
 '''WARNING: pandas dataframe has limitations to how much it can handle, computers with 8-16 GB RAM should be fine unless file has millions of rows. 
 More information on limitations and possible solutions:  https://www.geeksforgeeks.org/python/how-many-rows-can-pandas-dataframe-handle/'''
 
-''' HELPER FUNCTIONS '''
+'''Data filtering'''
 def remove_rows(df, col_name, good_val):
     return df[df[col_name] == good_val]
 
@@ -31,20 +27,8 @@ def remove_by_threshold(df, gene_counts_df, threshold): #only remove bottom thre
     new_df = df[~exc_bitmask].copy()
     print("The following light chain genes were removed:", l_to_exc.to_list())
     return new_df
-    
 
-def get_gene_counts_df(df, gene_types):
-    '''input: 
-        df - df where each row has all information for each barcode 
-        gene_types - types of genes to consider (MUST have same column name as excel, ex: ['v_gene', 'j_gene', 'd_gene'])
-    output: 
-        gene_counts_df - pandas serise of total counts of  heavy and light chains in the dataset'''
-    needed_columns = [col for col in df.columns if any(col.endswith(gene) for gene in gene_types)]
-    all_genes = pd.concat([df[col] for col in needed_columns], ignore_index=True)
-    gene_counts_df = all_genes.value_counts().rename_axis('gene').reset_index(name='count')
-    return gene_counts_df
-
-
+'''Data reformating'''
 def make_combined_rows(df, chain_order): 
     ''' Function reorganize data for each cell, all chains together and orded with heavy chains first. 
     Input: 
@@ -79,35 +63,30 @@ def make_combined_rows(df, chain_order):
         rows.append(combined_row)
     return pd.DataFrame(rows)
 
-def get_pair_counts(df, gene_types): 
-    '''
-    input: 
-        df - df where each row has all information for each barcode 
-        gene_types - types of genes to consider (MUST have same column name as excel, ex: ['v_gene', 'j_gene', 'd_gene'])
-    output: 
-        pairs_df - pandas df of all of the heavy and light pairs in each cells 
-    '''
-    needed_columns = [col for col in df.columns if any(col.endswith(gene) for gene in gene_types)]
-    pair_counts = Counter()
-    for index, row in df.iterrows():
-        cell_genes = row[needed_columns].values.flatten()
-        #seperating heavy and light chains
-        heavies = []
-        lights = []
-        for gene in cell_genes: 
-            if isinstance(gene, str):
-                if gene.startswith('IGH'):
-                    heavies.append(gene)
-                elif (gene.startswith('IGK') or gene.startswith('IGL')):
-                    lights.append(gene)
-        for h in heavies: 
-            for l in lights: 
-                pair_counts[(h, l)] += 1
-    #converting counter to dataframe 
-    pairs_df = pd.DataFrame([(k[0], k[1], v) for k, v, in pair_counts.items()], 
-                            columns=["IGH", "IGKL", "Pair Count"])    
-    return pairs_df
+def pairDf_to_Matrix(pairs_df, all_heavies, all_lights): 
+    pairs_df = pairs_df.set_index(["IGH", "IGKL"])  # so index matches full_pairs
+    all_pairs = pd.MultiIndex.from_product([all_heavies, all_lights], names=["IGH", "IGKL"])
+    pairs_df = pairs_df.reindex(all_pairs, fill_value=0)
+    pairs_df = pairs_df.reset_index() #so that can pivot 
+    matrix_df = pairs_df.pivot(index="IGKL", columns="IGH", values="Pair Count") #matrix is reshaped DataFrame
+    return matrix_df
 
+def sortCols_byGenes(df, prefix_lenth, gene_col_name):
+    df['Prefix'] = df[gene_col_name].str[:prefix_lenth]
+    df['sortNum'] = df[gene_col_name].apply(get_gene_num)
+    df = df.sort_values(by=['Prefix', 'sortNum']).drop(columns=['Prefix', 'sortNum'])
+    return df
+
+def get_gene_num(gene):
+    ''' Converts string number at end of gene name to int/float. Is helper func for gene sorting.'''
+    match = re.search(r'-(\d+)', gene)
+    if match:
+        return int(match.group(1))
+    else: #if no dash 
+        match = re.search(r'(\d+)$', gene)
+        return int(match.group(1)) if match else float('inf')
+
+'''Inserting new data'''
 def amino_acid_count(data, amino_code, trim_heavy=True):
     '''
     input: 
@@ -177,76 +156,7 @@ def crd3_pKa(data, trim_heavy=True):
         col_index = data.columns.get_loc(col) + 1
         data.insert(col_index, col_name, new_cols[col])
 
-def all_heavyLight_genes(df_list, gene_types): 
-    '''
-    input: 
-        - df_list: list of dfs of all files to consider in experiment 
-        - gene_types: list of gene types to be considered (MUST BE SAME AS NAME IN FILE)
-    output: 
-        - all_igh: list of all the heavy chain genes in the experiment 
-        - all_iglk: list of all light chain genes in the experiment 
-    '''
-    all_igh = []
-    all_iglk = []
-    for df in df_list:
-        needed_cols = [col for col in df.columns if any(col.endswith(gene) for gene in gene_types)]
-        all_genes = pd.concat([df[gene] for gene in needed_cols], ignore_index=True).dropna().drop_duplicates()
-        for gene in all_genes: 
-            if gene.startswith('IGH'):
-                all_igh.append(gene)
-            elif (gene.startswith('IGK') or gene.startswith('IGL')):
-                all_iglk.append(gene)
-    all_igh = list(set(all_igh))
-    all_iglk = list(set(all_iglk))
-    return all_igh, all_iglk
-
-def pairDf_to_Matrix(pairs_df, all_heavies, all_lights): 
-    pairs_df = pairs_df.set_index(["IGH", "IGKL"])  # so index matches full_pairs
-    all_pairs = pd.MultiIndex.from_product([all_heavies, all_lights], names=["IGH", "IGKL"])
-    pairs_df = pairs_df.reindex(all_pairs, fill_value='')
-    pairs_df = pairs_df.reset_index() #so that can pivot 
-    matrix_df = pairs_df.pivot(index="IGH", columns="IGKL", values="Pair Count") #matrix is reshaped DataFrame
-    return matrix_df
-
-def get_gene_num(gene):
-    ''' Converts string number at end of gene name to int/float'''
-    match = re.search(r'-(\d+)', gene)
-    if match:
-        return int(match.group(1))
-    else: #if no dash 
-        match = re.search(r'(\d+)$', gene)
-        return int(match.group(1)) if match else float('inf')
-    
-
-def lightChain_vs_heavyRcount_relFrequency(grouped_df, needed_genes, ighR_colName): 
-    #sorting out data needed 
-    heavyR_df = grouped_df[[ighR_colName, 'IGL_v_gene', 'IGK_v_gene']].copy()
-    heavyR_df = heavyR_df.dropna(subset=[ighR_colName]) #removing columns with no heavy R count (no heavy chain)
-    #reorganizing data so that it is indexed by light genes 
-    heavyR_df['Rcount_type'] = heavyR_df[ighR_colName].apply(
-        lambda x: 'Rcount_gt_0' if x > 0 else 'Rcount_equalTo_0'
-    )
-    light_gene_cols = ['IGL_v_gene', 'IGK_v_gene']
-    heavyR_df = heavyR_df.melt(id_vars=[ighR_colName, 'Rcount_type'], value_vars=light_gene_cols, value_name='light_gene').dropna(subset=['light_gene'])
-    heavyR_df = heavyR_df.drop(columns='variable')
-    output_df = (heavyR_df.groupby(['light_gene', 'Rcount_type']).size().reset_index(name='count').pivot(index='light_gene', columns='Rcount_type', values='count')
-                .fillna(0).astype(int))
-    for col in ['Rcount_equalTo_0', 'Rcount_gt_0']: #so program does not crash if one column has no values
-        if col not in output_df.columns:
-            output_df[col] = 0
-    #make all light genes present 
-    output_df = output_df.reindex(needed_genes, fill_value=0)
-    output_df = output_df.reset_index()
-    #relative frequency analysis 
-    output_df['total'] = output_df['Rcount_equalTo_0']+output_df['Rcount_gt_0']
-    output_df['R_gt_0_freq'] = output_df['Rcount_gt_0']/output_df['total'] *100
-    output_df['R_equal_0_freq'] = output_df['Rcount_equalTo_0']/output_df['total'] *100
-    return output_df 
-
-#TODO function for z-test USE FOR PAIRS OF LIGHT AND HEAVY CHAINS
-#TODO function for bionomial distribution FOR LIGHT CHAINS AND R STUFF
-#TODO function for t-test USE FOR COMPAIRING NORMALIZED ABUNDANCE OF LIGHT CHAINS BETWEEN HEALTHY AND SLE
-
+'''Exporting Functions'''
 def to_excel(grouped_df, specific_count, frequencies_matrix, file_name):
     with pd.ExcelWriter("tai_"+ file_name + ".xlsx", engine='openpyxl') as writer:
         grouped_df.to_excel(writer, sheet_name="Grouped", index=False,  na_rep="")
@@ -315,7 +225,6 @@ def all_to_excel(organized_data, file_name):
                         #TODO:ADD IN ALL THE GRAPH STUFF!
         #TODO: add in colorcoding of rows with significance?? 
 
-
 '''Helper Functions for alternative_to_excel'''            
 def writer_table_helper(writer, sheetName, df, start_row, start_col, title=None, sort_by=None, drop_cols=None, include_cols=None):
         if title: 
@@ -353,40 +262,3 @@ def insert_graph_helper(writer, sheet_name, df, graph_type, graph_details, plot_
     imgdata.seek(0)
     img = Image(imgdata)
     writer.sheets[sheet_name].add_image(img, f"A{plot_row}")
-
-'''Not Needed Functions (but dont want to delete them yet)'''
-def ungrouped_chain_type_counts(df, gene_types): 
-    '''
-    input: 
-        grouped - df where each row has all information for each barcode 
-        gene_types - types of genes to consider (MUST have same column name as excel, ex: ['v_gene', 'j_gene', 'd_gene'])
-    output: 
-        total_heavyLight_counts - pandas serise of total counts of  heavy and light chains in the dataset
-        chain_occurance_counts - pandas serise of total heavy and light chains 
-        pairs_df - pandas df of all of the heavy and light pairs in each cells 
-    '''
-    #counting totals for IGH, IGK, IGL chains
-    total_heavyLight_counts = df['chain'].value_counts() 
-    #counting frequency of all genes in dataset 
-    all_genes = pd.concat([df[gene] for gene in gene_types])
-    chain_occurance_counts = all_genes.value_counts()
-    #counting pairs of heavy and light chains 
-    pair_counts = Counter()
-    for barcode, chain_infos in df.groupby("barcode"):
-        cell_genes = chain_infos[gene_types].values.flatten()
-        #seperating heavy and light chains
-        heavies = []
-        lights = []
-        for gene in cell_genes: 
-            if isinstance(gene, str):
-                if gene.startswith('IGH'):
-                    heavies.append(gene)
-                elif (gene.startswith('IGK') or gene.startswith('IGL')):
-                    lights.append(gene)
-        for h in heavies: 
-            for l in lights: 
-                pair_counts[(h, l)] += 1
-    #converting counter to dataframe 
-    pairs_df = pd.DataFrame([(k[0], k[1], v) for k, v, in pair_counts.items()], 
-                            columns=["IGH", "IGKL", "Pair Count"])       
-    return total_heavyLight_counts, chain_occurance_counts, pairs_df

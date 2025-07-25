@@ -146,3 +146,40 @@
 #             sheet = writer.book[fam_name]
 #             sheet.add_image(img)
 #         cur_sample += 1 
+
+# '''Not Needed Functions (but dont want to delete them yet)'''
+# def ungrouped_chain_type_counts(df, gene_types): 
+#     '''
+#     input: 
+#         grouped - df where each row has all information for each barcode 
+#         gene_types - types of genes to consider (MUST have same column name as excel, ex: ['v_gene', 'j_gene', 'd_gene'])
+#     output: 
+#         total_heavyLight_counts - pandas serise of total counts of  heavy and light chains in the dataset
+#         chain_occurance_counts - pandas serise of total heavy and light chains 
+#         pairs_df - pandas df of all of the heavy and light pairs in each cells 
+#     '''
+#     #counting totals for IGH, IGK, IGL chains
+#     total_heavyLight_counts = df['chain'].value_counts() 
+#     #counting frequency of all genes in dataset 
+#     all_genes = pd.concat([df[gene] for gene in gene_types])
+#     chain_occurance_counts = all_genes.value_counts()
+#     #counting pairs of heavy and light chains 
+#     pair_counts = Counter()
+#     for barcode, chain_infos in df.groupby("barcode"):
+#         cell_genes = chain_infos[gene_types].values.flatten()
+#         #seperating heavy and light chains
+#         heavies = []
+#         lights = []
+#         for gene in cell_genes: 
+#             if isinstance(gene, str):
+#                 if gene.startswith('IGH'):
+#                     heavies.append(gene)
+#                 elif (gene.startswith('IGK') or gene.startswith('IGL')):
+#                     lights.append(gene)
+#         for h in heavies: 
+#             for l in lights: 
+#                 pair_counts[(h, l)] += 1
+#     #converting counter to dataframe 
+#     pairs_df = pd.DataFrame([(k[0], k[1], v) for k, v, in pair_counts.items()], 
+#                             columns=["IGH", "IGKL", "Pair Count"])       
+#     return total_heavyLight_counts, chain_occurance_counts, pairs_df
