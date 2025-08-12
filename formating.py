@@ -9,7 +9,7 @@ import pandas as pd
 More information on limitations and possible solutions:  https://www.geeksforgeeks.org/python/how-many-rows-can-pandas-dataframe-handle/'''
 
 '''Data filtering'''
-def remove_rows(df, col_name, good_val):
+def remove_rows(df, col_name, good_val): #AT THE VERY LEAST MODIFY TO BE ABLE TO REMOVE SEVERAL THINGS IN ONE GO!
     return df[df[col_name] == good_val]
 
 def remove_by_threshold(df, gene_counts_df, threshold): #only remove bottom threshold of light chains (remove whole cell row)
@@ -72,10 +72,9 @@ def pairDf_to_Matrix(pairs_df, all_heavies, all_lights):
     return matrix_df
 
 def sortCols_byGenes(df, prefix_lenth, gene_col_name):
-    df['Prefix'] = df[gene_col_name].str[:prefix_lenth]
-    df['sortNum'] = df[gene_col_name].apply(get_gene_num)
-    df = df.sort_values(by=['Prefix', 'sortNum']).drop(columns=['Prefix', 'sortNum'])
-    return df
+    prefixes = df[gene_col_name].str[:prefix_lenth]
+    sort_nums = df[gene_col_name].apply(get_gene_num)
+    return df.assign(_prefix=prefixes, _sortNum=sort_nums).sort_values(by=['_prefix', '_sortNum']).drop(columns=['_prefix', '_sortNum'])
 
 def get_gene_num(gene):
     ''' Converts string number at end of gene name to int/float. Is helper func for gene sorting.'''
@@ -189,7 +188,7 @@ def all_to_excel(organized_data, file_name):
     output: 
         there is nothing returned from function but file file_name.xlsx is made in this folder
     '''
-    with pd.ExcelWriter("tai_"+ file_name + ".xlsx", engine='openpyxl') as writer: #if tai_filename.xlsx already this will exists its contents
+    with pd.ExcelWriter("tai_"+ file_name + ".xlsx", engine='openpyxl', mode='a', if_sheet_exists="overlay") as writer: #if tai_filename.xlsx already this will exists its contents
         for sheetName, sheet_content in organized_data.items(): 
             print(f"Writing sheet: {sheetName}")
             start_row, start_col = 0, 0
@@ -227,16 +226,16 @@ def all_to_excel(organized_data, file_name):
 
 '''Helper Functions for alternative_to_excel'''            
 def writer_table_helper(writer, sheetName, df, start_row, start_col, title=None, sort_by=None, drop_cols=None, include_cols=None):
+        use_df = df.copy()  # start from original df
         if title: 
             pd.DataFrame([title]).to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, header=False, index=False)
             start_row += 1
         if sort_by:
-            df = df.sort_values(by=sort_by)
+            use_df = use_df.sort_values(by=sort_by)
         if drop_cols: 
-            df = df.drop(columns=drop_cols)
-        use_df = df 
+            use_df = use_df.drop(columns=drop_cols)
         if include_cols: 
-            use_df = df[include_cols]
+            use_df = use_df[include_cols]
         use_df.to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, index=True, na_rep="")
         return use_df.shape
 
