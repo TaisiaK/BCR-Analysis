@@ -72,16 +72,18 @@ def all_heavyLight_genes(dfs, gene_types):
     all_iglk = list(set(all_iglk))
     return all_igh, all_iglk
 
-def lightChain_vs_heavyRcount_relFrequency(grouped_df, light_gene_names, ighR_colName): 
+def lightChain_vs_heavyRcount_relFrequency(grouped_df, light_gene_names, ighR_colName, light_gene_types): 
     #sorting out data needed 
-    heavyR_df = grouped_df[[ighR_colName, 'IGL_v_gene', 'IGK_v_gene']].copy()
+    wanted_cols = [f"{chain}_{col}" for chain in ['IGK', 'IGL'] for col in light_gene_types]
+    wanted_cols.append(ighR_colName)
+    heavyR_df = grouped_df[wanted_cols].copy()
+    wanted_cols.remove(ighR_colName)
     heavyR_df = heavyR_df.dropna(subset=[ighR_colName]) #removing columns with no heavy R count (no heavy chain)
     #reorganizing data so that it is indexed by light genes 
     heavyR_df['Rcount_type'] = heavyR_df[ighR_colName].apply(
         lambda x: 'Rcount_gt_0' if x > 0 else 'Rcount_equalTo_0'
     )
-    light_gene_cols = ['IGL_v_gene', 'IGK_v_gene']
-    heavyR_df = heavyR_df.melt(id_vars=[ighR_colName, 'Rcount_type'], value_vars=light_gene_cols, value_name='light_gene').dropna(subset=['light_gene'])
+    heavyR_df = heavyR_df.melt(id_vars=[ighR_colName, 'Rcount_type'], value_vars=wanted_cols, value_name='light_gene').dropna(subset=['light_gene'])
     heavyR_df = heavyR_df.drop(columns='variable')
     output_df = (heavyR_df.groupby(['light_gene', 'Rcount_type']).size().reset_index(name='count').pivot(index='light_gene', columns='Rcount_type', values='count')
                 .fillna(0).astype(int))
@@ -111,6 +113,14 @@ def relative_abundance_df(df, gene_types, wanted_gene_prefix, all_wanted_genes):
     output_df = formating.sortCols_byGenes(output_df, 6, 'gene')
     output_df['rel_freq'] = output_df['count']/output_df['count'].sum()*100
     return output_df.set_index('gene')
+
+#TODO: Make a function to anylze or genes of interest and their pKa/R count
+    #make it a dictionary because those have faster lookup times than pandas df! if easy to do
+    #remember how to use df.melt() think it will be very useful again in this function!!!
+    #but first somehow check that all pKa values for a gene are the same... not sure how to do that... shit man 
+# def relative_charges_df(df, column_types, chain_types):
+#     col
+
 
 #function for t-test USE FOR COMPAIRING NORMALIZED ABUNDANCE OF LIGHT CHAINS BETWEEN HEALTHY AND SLE
 def t_test(healthy_list, sick_list, all_genes_considered):
@@ -168,4 +178,3 @@ def binomalDist(iglk_hRcount_df, sucess_colName, total_colName, sucessP_colName)
         bino_dists.append(binom.sf(k, n, p))
     iglk_hRcount_df["Binomial_Dist_sf"] = bino_dists
     return iglk_hRcount_df
-

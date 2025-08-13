@@ -4,13 +4,24 @@ from io import BytesIO
 from openpyxl.drawing.image import Image
 import re
 import seaborn as sns
+from pathlib import Path
 import pandas as pd 
 '''WARNING: pandas dataframe has limitations to how much it can handle, computers with 8-16 GB RAM should be fine unless file has millions of rows. 
 More information on limitations and possible solutions:  https://www.geeksforgeeks.org/python/how-many-rows-can-pandas-dataframe-handle/'''
 
 '''Data filtering'''
-def remove_rows(df, col_name, good_val): #AT THE VERY LEAST MODIFY TO BE ABLE TO REMOVE SEVERAL THINGS IN ONE GO!
-    return df[df[col_name] == good_val]
+def filter_rows(df, filters): 
+    '''Returns a new df with only the rows where the specified columns have the values provided. 
+    Input: 
+        df - dataframe to remove columns from
+        filters - list with tuples where the first value is the column name, and the second is the wanted value in that column. 
+            ex: [('productive', True), ('is_naive', 'Naive'), ...] 
+    OUtput: A df with only the wanted rows. 
+    '''
+    mask = True 
+    for col_name, wanted_val in filters: 
+        mask &= df[col_name] == wanted_val
+    return df[mask]
 
 def remove_by_threshold(df, gene_counts_df, threshold): #only remove bottom threshold of light chains (remove whole cell row)
     if (threshold >= 1):
@@ -149,9 +160,9 @@ def crd3_pKa(data, trim_heavy=True):
             else: 
                 new_cols[col].append(None)
     for col in needed_cols: 
-        col_name = col[:4] + "_crd3_pKa"
+        col_name = col[:3] + "_crd3_pKa"
         if (trim_heavy == False):
-            col_name = col[:4] + "_noTrimCrd3_pKa"
+            col_name = col[:3] + "_noTrimCrd3_pKa"
         col_index = data.columns.get_loc(col) + 1
         data.insert(col_index, col_name, new_cols[col])
 
@@ -188,7 +199,12 @@ def all_to_excel(organized_data, file_name):
     output: 
         there is nothing returned from function but file file_name.xlsx is made in this folder
     '''
-    with pd.ExcelWriter("tai_"+ file_name + ".xlsx", engine='openpyxl', mode='a', if_sheet_exists="overlay") as writer: #if tai_filename.xlsx already this will exists its contents
+    file_path = Path(f"tai_{file_name}.xlsx")
+    if file_path.exists():
+        writer = pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists="overlay")
+    else: 
+        writer = pd.ExcelWriter(file_path, engine='openpyxl')
+    with writer: #if tai_filename.xlsx already this will exists its contents
         for sheetName, sheet_content in organized_data.items(): 
             print(f"Writing sheet: {sheetName}")
             start_row, start_col = 0, 0
@@ -224,7 +240,7 @@ def all_to_excel(organized_data, file_name):
                         #TODO:ADD IN ALL THE GRAPH STUFF!
         #TODO: add in colorcoding of rows with significance?? 
 
-'''Helper Functions for alternative_to_excel'''            
+'''Helper Functions for all_to_excel'''            
 def writer_table_helper(writer, sheetName, df, start_row, start_col, title=None, sort_by=None, drop_cols=None, include_cols=None):
         use_df = df.copy()  # start from original df
         if title: 
@@ -236,7 +252,12 @@ def writer_table_helper(writer, sheetName, df, start_row, start_col, title=None,
             use_df = use_df.drop(columns=drop_cols)
         if include_cols: 
             use_df = use_df[include_cols]
-        use_df.to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, index=True, na_rep="")
+        #add conditional formating styling for p_val columns 
+        sytled_df = use_df
+        if any(use_df.columns.str.endswith('p_values') | use_df.columns.str.endswith('sf')):
+            cols = [col for col in use_df.columns if col.endswith('p_values') or col.endswith('sf')]
+            sytled_df = use_df.style.highlight_between(subset=cols, color="#90EE90", left=0, right=0.05, inclusive='neither', axis=1)
+        sytled_df.to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, index=True, na_rep="")
         return use_df.shape
 
 #WAIT MAYBE https://docs.xlwings.org/en/stable/matplotlib.html CAN MAKE THIS MUCH EASIER!! AND THE GRAPHS WILL BE EDITABLE??
@@ -261,3 +282,7 @@ def insert_graph_helper(writer, sheet_name, df, graph_type, graph_details, plot_
     imgdata.seek(0)
     img = Image(imgdata)
     writer.sheets[sheet_name].add_image(img, f"A{plot_row}")
+
+def pval_cond_formating(value):
+    if value < 0.05 and value > 0: 
+        return 'background-color: lightgreen'

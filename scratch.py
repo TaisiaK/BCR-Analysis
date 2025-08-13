@@ -183,3 +183,37 @@
 #     pairs_df = pd.DataFrame([(k[0], k[1], v) for k, v, in pair_counts.items()], 
 #                             columns=["IGH", "IGKL", "Pair Count"])       
 #     return total_heavyLight_counts, chain_occurance_counts, pairs_df
+
+#again just more stuff that i might want to reference later but is getting in the way now 
+# f_name = "Atypical_heavy_light_chains.csv"
+# g_df = pd.read_csv(f_name)
+# all_igh, all_iglk = utils.all_heavyLight_genes([g_df], ['v_gene', 'j_gene', 'd_gene'])
+# g_df = utils.remove_rows(g_df, 'productive', True)
+# #adding additional columns 
+# utils.amino_acid_count(g_df, 'R')
+# utils.crd3_pKa(g_df)
+# needed_Lgenes = [gene for gene in all_iglk if gene.startswith("IGLV") or gene.startswith("IGKV")]
+# needed_Lgenes.sort()
+# processed_samples = [] #[[name, [cell type, heavy/light R freq], [cell type, heavy/light R freq], ...], [name, ...]]
+# for name, sample_info in g_df.groupby("Sample"):
+#     sample = [name]
+#     for cell_type, cell_info in sample_info.groupby("Celltype (Cluster)"):
+#         cell_df = utils.lightChain_vs_heavyRcount_relFrequency(cell_info, needed_Lgenes, "cdr_R_count")
+#         sample.append([cell_type, cell_df])
+#     processed_samples.append(sample)
+# totals = []
+# for cell_type, cell_info in g_df.groupby("Celltype (Cluster)"):
+#     cell_df = utils.lightChain_vs_heavyRcount_relFrequency(cell_info, needed_Lgenes, "cdr_R_count")
+#     totals.append([cell_type, cell_df])
+# e_format = {}
+# for sample in processed_samples: 
+#     e_format[sample[0]] = {"tables": [{"data": info[1], "title": f"{info[0]} Heavy Chain R Amount for Each Light Chain",
+#                 "graph_type": "Bar","graph_name": info[0],
+#                 "graph_details": {"x": "light_gene", "y": ["R_gt_0_freq", "R_equal_0_freq"]}}
+#             for info in sample[1:]]}
+# e_format["Total"] = {"tables": [{"data": info[1], "title": f"{info[0]} Heavy Chain R Amount for Each Light Chain",
+#                 "graph_type": "Bar","graph_name": info[0],
+#                 "graph_details": {"x": "light_gene", "y": ["R_gt_0_freq", "R_equal_0_freq"]}}
+#             for info in totals]}
+# print("Keys in e_format:", e_format.keys())
+# utils.all_to_excel(e_format, "R_analysis_Atypical_heavy_light_chains")
