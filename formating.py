@@ -130,14 +130,14 @@ def amino_acid_count(data, amino_code, trim_heavy=True):
         col_index = data.columns.get_loc(col) + 1
         data.insert(col_index, col_name, new_col)
 
-def crd3_pKa(data, trim_heavy=True):
+def cdr3_pKa(data, trim_heavy=True):
     '''
     input: 
         - data: df with data
         - trim_heavy: optional, usually true but if want to include the first 3 amino characters of heavy sequencies then add False to inputs 
     output: no output from this function but does insert column to data 
     '''
-    check_for = "_crd3_pKa" if trim_heavy else "_noTrimCrd3_pKa"
+    check_for = "_cdr3_pKa" if trim_heavy else "_noTrimCdr3_pKa"
     check_cols = [col for col in data.columns if col.endswith(check_for)]
     if len(check_cols) > 0:
         print("ERROR: This column already exists in this df. If you would like to update these values, please drop the related columns and rerun function. Like so:\n")
@@ -160,11 +160,19 @@ def crd3_pKa(data, trim_heavy=True):
             else: 
                 new_cols[col].append(None)
     for col in needed_cols: 
-        col_name = col[:3] + "_crd3_pKa"
+        col_name = col[:3] + "_cdr3_pKa"
         if (trim_heavy == False):
-            col_name = col[:3] + "_noTrimCrd3_pKa"
+            col_name = col[:3] + "_noTrimCdr3_pKa"
         col_index = data.columns.get_loc(col) + 1
         data.insert(col_index, col_name, new_cols[col])
+
+def combine_cdr3_genes(df, chains):
+    for chain_type in chains: 
+        combination = [chain_type+col for col in ['_v_gene','_d_gene','_j_gene']]
+        combined_col = df[combination].apply(lambda row: '_'.join(row.values.astype(str)[~pd.isna(row.values)]), axis=1)
+        col_index = df.columns.get_loc(combination[0])
+        col_name = chain_type+'_cdr3_genes'
+        df.insert(col_index, col_name, combined_col.values)
 
 '''Exporting Functions'''
 def to_excel(grouped_df, specific_count, frequencies_matrix, file_name):
@@ -205,6 +213,7 @@ def all_to_excel(organized_data, file_name):
     else: 
         writer = pd.ExcelWriter(file_path, engine='openpyxl')
     with writer: #if tai_filename.xlsx already this will exists its contents
+        last_start_row = 0
         for sheetName, sheet_content in organized_data.items(): 
             print(f"Writing sheet: {sheetName}")
             start_row, start_col = 0, 0
@@ -219,13 +228,17 @@ def all_to_excel(organized_data, file_name):
                             if g_type:= table.get("graph_type"):
                                 insert_graph_helper(writer, sheetName, cur_df, table["graph_type"], table["graph_details"], start_row + shape[0], table.get("graph_name"))
                             cur_startCol += num_col + 2
+                            last_start_row = shape[0] + 4
                         else: #split up df 
                             for value, group in cur_df.groupby(by=table.get("split_by")):
                                 shape = writer_table_helper(writer, sheetName, group, start_row, cur_startCol, title=table.get("split_by")[0]+": "+ value, sort_by=table.get("sort_by"), drop_cols=table.get("drop_cols"), include_cols=table.get("include_cols"))
                                 cur_startCol += shape[1]+1
+                                last_start_row = shape[0] + 3
                             #ADD GRAPHING PART HERE TOO!
-                    start_col = cur_startCol
+                    start_row = last_start_row
                 else: 
+                    start_row = last_start_row
+                    start_col = 0
                     cur_df = item.get("data")
                     if not item.get("split_by"): #keep cur_df together 
                         shape = writer_table_helper(writer, sheetName, cur_df, start_row, start_col, title=item.get("title"), sort_by=item.get("sort_by"), drop_cols=item.get("drop_cols"), include_cols=item.get("include_cols"))

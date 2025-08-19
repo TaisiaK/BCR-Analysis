@@ -114,13 +114,56 @@ def relative_abundance_df(df, gene_types, wanted_gene_prefix, all_wanted_genes):
     output_df['rel_freq'] = output_df['count']/output_df['count'].sum()*100
     return output_df.set_index('gene')
 
-#TODO: Make a function to anylze or genes of interest and their pKa/R count
-    #make it a dictionary because those have faster lookup times than pandas df! if easy to do
-    #remember how to use df.melt() think it will be very useful again in this function!!!
-    #but first somehow check that all pKa values for a gene are the same... not sure how to do that... shit man 
-# def relative_charges_df(df, column_types, chain_types):
-#     col
-
+def rel_charge_df(df, col_suffixes, chain_types):
+    ''' Function to analyze genes of interest and their pKa/R count
+    Input:
+        col_suffixes - list of the endings of the columns you want information for on each chain. 
+            ex: ['v_gene', 'd_gene', 'j_gene', 'cdr3_pKa', 'R_count']
+        chain_types - list of the starts of column names you want. usually the chain types. 
+            ex: ['IGH'] or ['IGL', 'IGK']
+    Ouputs: 
+        output_df: new df with the columns TYPE_cdr3_genes, TYPE_cdr3_pKa_total, TYPE_R_count_total	count, rel_freq, avg_pKa, avg_R_count, pKa_rel_freq, R_count_rel_freq. 
+    '''
+    if len(chain_types) > 2: 
+        print("Function can only accept the following chain type inputs: ['IGH'], ['IGL'], ['IGK'], ['IGL', 'IGK']")
+    #making smaller df with only needed information 
+    wanted_cols = [f"{chain}_{col}" for chain in chain_types for col in col_suffixes]
+    wanted_df = df[wanted_cols]
+    formating.combine_cdr3_genes(wanted_df, chain_types)
+    needed_ends = ['cdr3_genes']
+    for end in col_suffixes: 
+        if not end.endswith('gene'): needed_ends.append(end)
+    needed_cols = [f"{chain}_{end}" for chain in chain_types for end in needed_ends]
+    charges_df = wanted_df[needed_cols].copy()
+    cdr3_names = [f"{chain}_cdr3_genes" for chain in chain_types]
+    combined_igh, combined_iglk = all_heavyLight_genes([charges_df], cdr3_names)
+    rel_abund_df = relative_abundance_df(charges_df, ['cdr3_genes'], chain_types, combined_igh if 'IGH' in chain_types else combined_iglk)
+    if len(chain_types) == 2: 
+        type1_cols = [f"{chain_types[0]}_{end}" for end in needed_ends]
+        type1_df = charges_df[type1_cols].rename(columns={col: f"light_{col[4:]}" for col in type1_cols})
+        type2_cols = [f"{chain_types[1]}_{end}" for end in needed_ends]
+        type2_df = charges_df.drop(type1_cols, axis=1).rename(columns={col: f"light_{col[4:]}" for col in type2_cols})
+        charges_df = pd.concat([type1_df, type2_df], ignore_index=True)#.drop(['index'], axis=1)
+        chain_types = ['light']
+        cdr3_names = 'light_cdr3_genes'
+    else: cdr3_names = cdr3_names[0]
+    charges_df.dropna(subset=[f"{chain}_cdr3_pKa" for chain in chain_types], inplace=True)
+    cdr3_genes = []
+    cdr3_pKa_total = []
+    R_count_total = []
+    grouped = charges_df.groupby(by=cdr3_names)
+    prefix = chain_types[0]
+    for gene_names in rel_abund_df.index.astype(str): 
+        cdr3_genes.append(gene_names)
+        cdr3_pKa_total.append(grouped.get_group(gene_names)[f"{prefix}_cdr3_pKa"].sum())
+        R_count_total.append(grouped.get_group(gene_names)[f"{prefix}_R_count"].sum())
+    total_charge_df = pd.DataFrame({f"{prefix}_cdr3_genes":cdr3_genes, f"{prefix}_cdr3_pKa_total":cdr3_pKa_total, f"{prefix}_R_count_total":R_count_total})
+    output_df = pd.merge(total_charge_df, rel_abund_df.reset_index().set_axis([f"{prefix}_cdr3_genes", 'count', 'rel_freq'], axis=1),on=[f"{prefix}_cdr3_genes"], how='outer')
+    output_df['avg_pKa'] = output_df[f"{prefix}_cdr3_pKa_total"]/output_df['count']
+    output_df['avg_R_count'] = output_df[f"{prefix}_R_count_total"]/output_df['count']
+    output_df['pKa_rel_freq'] = output_df['avg_pKa']*output_df['rel_freq']
+    output_df['R_count_rel_freq'] = output_df['avg_R_count']*output_df['rel_freq']
+    return output_df
 
 #function for t-test USE FOR COMPAIRING NORMALIZED ABUNDANCE OF LIGHT CHAINS BETWEEN HEALTHY AND SLE
 def t_test(healthy_list, sick_list, all_genes_considered):
