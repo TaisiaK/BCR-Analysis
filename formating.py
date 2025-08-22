@@ -24,6 +24,16 @@ def filter_rows(df, filters):
     return df[mask]
 
 def remove_by_threshold(df, gene_counts_df, threshold): #only remove bottom threshold of light chains (remove whole cell row)
+    '''
+    Inputs: 
+        df: df to remove bottom threshold of light chains from. 
+        gene_counts_df: df with gene names and counts of their occurances. 
+                        Output of analysis.get_gene_counts_df(df, [genes of interest])
+        threshold: number from 0 to 1. if want to removed bottom 5% input 0.05, 15% 0.015, etc
+    output: 
+        new_df: a new dataframe that does not include the bottom threshold of light chains. 
+        The inputed df is not changed so can go back to it if want to not have removed threshold. 
+    '''
     if (threshold >= 1):
         print("The threshold should be a decimal value between 0 to 1 (not inclusive).")
         return
@@ -75,6 +85,14 @@ def make_combined_rows(df, chain_order):
     return pd.DataFrame(rows)
 
 def pairDf_to_Matrix(pairs_df, all_heavies, all_lights): 
+    '''Converts pairs_df into matrix format
+    Inputs: 
+        pairs_df: df with the gene pairs and the counts of their occurances 
+        all_heavies: list of all heavy genes to be included in matrix 
+        all_lights: list of all light genes to be included in matrix 
+    Output: 
+        matrix_df: a new pivoted matrix where the columns are heavy genes and the rows are light chains. 
+    '''
     pairs_df = pairs_df.set_index(["IGH", "IGKL"])  # so index matches full_pairs
     all_pairs = pd.MultiIndex.from_product([all_heavies, all_lights], names=["IGH", "IGKL"])
     pairs_df = pairs_df.reindex(all_pairs, fill_value=0)
@@ -83,6 +101,14 @@ def pairDf_to_Matrix(pairs_df, all_heavies, all_lights):
     return matrix_df
 
 def sortCols_byGenes(df, prefix_lenth, gene_col_name):
+    '''Sorts rows of given df based on the genes in the column provided. Note does not work too well for combined cdr3 columns yet (as in will only sort based on first gene name and not others). 
+    Inputs:
+        df: df that is to be sorted 
+        prefix_lenth: integer for the length of the prefix to be considered usually 6 so it is before the _number that some gene names have. 
+        gene_col_name: the EXACT name of the column in the df that contains the gene names that the df rows should be sorted by. 
+    Output: 
+        A df where the columns are sorted based on gene name. Need to assign this to the df variable you inputed since it does not change the df in place. 
+    '''
     prefixes = df[gene_col_name].str[:prefix_lenth]
     sort_nums = df[gene_col_name].apply(get_gene_num)
     return df.assign(_prefix=prefixes, _sortNum=sort_nums).sort_values(by=['_prefix', '_sortNum']).drop(columns=['_prefix', '_sortNum'])
@@ -131,7 +157,7 @@ def amino_acid_count(data, amino_code, trim_heavy=True):
         data.insert(col_index, col_name, new_col)
 
 def cdr3_pKa(data, trim_heavy=True):
-    '''
+    ''' Adds a new column with the calculated pKa of the cdr3 region. Inserts the column into inputed df right after cdr3 column. 
     input: 
         - data: df with data
         - trim_heavy: optional, usually true but if want to include the first 3 amino characters of heavy sequencies then add False to inputs 
@@ -167,24 +193,44 @@ def cdr3_pKa(data, trim_heavy=True):
         data.insert(col_index, col_name, new_cols[col])
 
 def combine_cdr3_genes(df, chains):
+    '''Inserts a new row that that contains the combined gene names of genes in cdr3 region of chain. 
+    Inputs: 
+        df: dataframe to insert column of cdr3 gene names into
+        chains: all the kinds of chains (IGK, IGL, IGH) to make a column for. 
+                Chain names MUST be the SAME as the prefix to chain specific columns in the df. 
+    output: no output from this function but does modify df by inserting a column.'''
     for chain_type in chains: 
+        col_name = chain_type+'_cdr3_genes'
+        if col_name in df.columns: #No need to remake column if it already exists. 
+            print(f"The column {col_name} already exists. If you would like tp remake please drop this column in df and rerun function.")
+            print(f"You can drop the column by doing: df = df.drop(columns='{col_name}')")
+            return 
         combination = [chain_type+col for col in ['_v_gene','_d_gene','_j_gene']]
         combined_col = df[combination].apply(lambda row: '_'.join(row.values.astype(str)[~pd.isna(row.values)]), axis=1)
         col_index = df.columns.get_loc(combination[0])
-        col_name = chain_type+'_cdr3_genes'
         df.insert(col_index, col_name, combined_col.values)
 
-'''Exporting Functions'''
-def to_excel(grouped_df, specific_count, frequencies_matrix, file_name):
-    with pd.ExcelWriter("tai_"+ file_name + ".xlsx", engine='openpyxl') as writer:
-        grouped_df.to_excel(writer, sheet_name="Grouped", index=False,  na_rep="")
-        start_col = 0
-        #writing gene type frequencies to same excel file but different sheet 
-        specific_count.to_excel(writer, sheet_name='Analysis', index=True, startcol=start_col, na_rep="")
-        start_col += 4
-        #writing pairs in form of frequencies matrix to the same excel sheet 
-        frequencies_matrix.to_excel(writer, sheet_name='Analysis', index=True, startcol=start_col, na_rep="")
+def add_missing_genes(df, all_genes, col_name):
+    '''function used to add genes that are not present in one file but are part of the total set of genes found 
+    in the experiment. Use this to add the missing genes with the number of occurances set to 0 and sort genes 
+    they appear in the same order for each file. 
+    Inputs: 
+        df: dataframe with a column of genes and other numerical information about them. 
+        all_genes: list of all genes that are included for this subset. For example if the given df is only 
+                    heavy chains from a file then this should be all_igh which can be outputed from analysis.all_heavyLight_genes([list of ALL PROCESSED DFS IN EXPERIMENT], ...). 
+        col_name: the EXACT name for the column containing the genes in the inputed df. 
+    Output: 
+        ouput_df: new df containing all sorted genes. The gene names are set as the index so can get at specific rows by
+                  doing output_df[output_df[col_name] == a_specific_gene].     
+    '''
+    missing_genes = pd.DataFrame({col_name: list(set(all_genes) - set(df[col_name].unique()))})
+    for col in df.columns: 
+        if col == col_name: continue
+        missing_genes[col] = 0 
+    output_df = sortCols_byGenes(pd.concat([df, missing_genes], ignore_index=True),6, col_name)
+    return output_df.set_index(col_name)
 
+'''Exporting Functions'''
 def all_to_excel(organized_data, file_name): 
     ''' TODO: remove tai_ from the naming before giving to other people to use!
     input: 
@@ -251,30 +297,31 @@ def all_to_excel(organized_data, file_name):
                             shape = writer_table_helper(writer, sheetName, group, start_row, cur_startCol, title=item.get("split_by")[0]+": "+ value, sort_by=item.get("sort_by"), drop_cols=item.get("drop_cols"), include_cols=item.get("include_cols"))
                             cur_startCol += shape[1]+1
                         #TODO:ADD IN ALL THE GRAPH STUFF!
-        #TODO: add in colorcoding of rows with significance?? 
 
-'''Helper Functions for all_to_excel'''            
+'''Helper Functions for all_to_excel can ignore it. Will not do anything useful if used on its own.'''            
 def writer_table_helper(writer, sheetName, df, start_row, start_col, title=None, sort_by=None, drop_cols=None, include_cols=None):
-        use_df = df.copy()  # start from original df
-        if title: 
-            pd.DataFrame([title]).to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, header=False, index=False)
-            start_row += 1
-        if sort_by:
-            use_df = use_df.sort_values(by=sort_by)
-        if drop_cols: 
-            use_df = use_df.drop(columns=drop_cols)
-        if include_cols: 
-            use_df = use_df[include_cols]
-        #add conditional formating styling for p_val columns 
-        sytled_df = use_df
-        if any(use_df.columns.str.endswith('p_values') | use_df.columns.str.endswith('sf')):
-            cols = [col for col in use_df.columns if col.endswith('p_values') or col.endswith('sf')]
-            sytled_df = use_df.style.highlight_between(subset=cols, color="#90EE90", left=0, right=0.05, inclusive='neither', axis=1)
-        sytled_df.to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, index=True, na_rep="")
-        return use_df.shape
+    '''This function is only to be used when it is called in ''' 
+    use_df = df.copy()  # start from original df
+    if title: 
+        pd.DataFrame([title]).to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, header=False, index=False)
+        start_row += 1
+    if sort_by:
+        use_df = use_df.sort_values(by=sort_by)
+    if drop_cols: 
+        use_df = use_df.drop(columns=drop_cols)
+    if include_cols: 
+        use_df = use_df[include_cols]
+    #add conditional formating styling for p_val columns 
+    sytled_df = use_df
+    if any(use_df.columns.str.endswith('p_values') | use_df.columns.str.endswith('sf')):
+        cols = [col for col in use_df.columns if col.endswith('p_values') or col.endswith('sf')]
+        sytled_df = use_df.style.highlight_between(subset=cols, color="#90EE90", left=0, right=0.05, inclusive='neither', axis=1)
+    sytled_df.to_excel(writer, sheet_name=sheetName, startcol=start_col, startrow=start_row, index=True, na_rep="")
+    return use_df.shape
 
 #WAIT MAYBE https://docs.xlwings.org/en/stable/matplotlib.html CAN MAKE THIS MUCH EASIER!! AND THE GRAPHS WILL BE EDITABLE??
 def insert_graph_helper(writer, sheet_name, df, graph_type, graph_details, plot_row, graph_name="", graph_width=25): 
+    '''Is also a helper function for all_to_excel, has not been tested in a long time. Is not needed since graphs are not needed for excel files.'''
     fig, ax = plt.subplots(figsize=(graph_width, 5))
     x = graph_details.get("x")
     y = graph_details.get("y")
@@ -295,7 +342,3 @@ def insert_graph_helper(writer, sheet_name, df, graph_type, graph_details, plot_
     imgdata.seek(0)
     img = Image(imgdata)
     writer.sheets[sheet_name].add_image(img, f"A{plot_row}")
-
-def pval_cond_formating(value):
-    if value < 0.05 and value > 0: 
-        return 'background-color: lightgreen'

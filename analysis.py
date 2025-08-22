@@ -46,11 +46,12 @@ def get_pair_counts(df, gene_types):
                             columns=["IGH", "IGKL", "Pair Count"])    
     return pairs_df
 
-def all_heavyLight_genes(dfs, gene_types): 
+def all_heavyLight_genes(dfs, gene_types, use_index=False): 
     '''
     input: 
         - dfs: dfs of all files to consider in experiment, can be dictionary or list. 
         - gene_types: list of gene types to be considered (MUST BE SAME AS NAME IN FILE)
+        - use_index: when true rather than getting genes from columns the index is used for the genes. 
     output: 
         - all_igh: list of all the heavy chain genes in the experiment 
         - all_iglk: list of all light chain genes in the experiment 
@@ -61,9 +62,14 @@ def all_heavyLight_genes(dfs, gene_types):
     if isinstance(dfs, dict): #so function will work with dictionaries too
         df_list = list(dfs.values())
     for df in df_list:
-        needed_cols = [col for col in df.columns if any(col.endswith(gene) for gene in gene_types)]
-        all_genes = pd.concat([df[gene] for gene in needed_cols], ignore_index=True).dropna().drop_duplicates()
+        if use_index: 
+            all_genes = df.index 
+        else: 
+            needed_cols = [col for col in df.columns if any(col.endswith(gene) for gene in gene_types)]
+            all_genes = pd.concat([df[gene] for gene in needed_cols], ignore_index=True).dropna().drop_duplicates()
         for gene in all_genes: 
+            if not isinstance(gene, str):
+                gene = str(gene)
             if gene.startswith('IGH'):
                 all_igh.append(gene)
             elif (gene.startswith('IGK') or gene.startswith('IGL')):
@@ -73,6 +79,15 @@ def all_heavyLight_genes(dfs, gene_types):
     return all_igh, all_iglk
 
 def lightChain_vs_heavyRcount_relFrequency(grouped_df, light_gene_names, ighR_colName, light_gene_types): 
+    '''
+    Inputs: 
+        grouped_df: df to get the light vs heavy chain R count relative frequency of. This df must be in the format of the outputs of formating.make_combined_rows(). 
+        light_gene_names: list of all of the light gene names to group by. 
+        ighR_colName: the EXACT name of the column with heavy chain R count in grouped_df. 
+        light_gene_types: types of light genes to consider. 
+    Outputs: 
+        output_df: a new dataframe where there is a row for each light chain gene and the following columns: light_gene, Rcount_equalTo_0, Rcount_gt_0	total, R_equal_0_freq, R_gt_0_freq
+    '''
     #sorting out data needed 
     wanted_cols = [f"{chain}_{col}" for chain in ['IGK', 'IGL'] for col in light_gene_types]
     wanted_cols.append(ighR_colName)
@@ -100,7 +115,25 @@ def lightChain_vs_heavyRcount_relFrequency(grouped_df, light_gene_names, ighR_co
     output_df['R_gt_0_freq'] = output_df['Rcount_gt_0']/output_df['total'] *100
     return output_df 
 
+#but this should be for combined heavy chains right....
+def lightChain_Hpair_pKa(df, all_iglk, pka_col_name):
+    #adding column for combined_cdr3 heavy genes 
+    formating.combine_cdr3_genes(df, ['IGH'])
+    wanted_col = ['IGK_v_gene', 'IGK_j_gene', 'IGL_v_gene', 'IGL_j_gene', 'IGH_cdr3_genes', 'IGH_cdr3_pKa']
+    wanted_df = df[wanted_col]
+    #TODO: COME BACK AND FINISH THISSSS
+    
+
 def relative_abundance_df(df, gene_types, wanted_gene_prefix, all_wanted_genes):
+    '''
+    Inputs: 
+        df: dataframe to get the counts of gene apperances in. 
+        gene_types: types of genes to count. ex: ['v_gene', 'j_gene', 'd_gene'] (MUST MATCH column name endings in df)
+        wanted_gene_prefix: prefix of the genes to count. ex: ['IGH'], ['IGK', 'IGL']
+        all_wanted_genes: list of all heavy or light chain genes in the experiment (not just file) depending on wanted_gene_prefix value. 
+    Output: 
+        output_df: new dataframe where in row is a different gene and has the columns: count and rel_freq. The index is the gene names so can search for a specific row by gene name. 
+    '''
     all_gene_counts_df = get_gene_counts_df(df, gene_types)
     mask = False
     for prefix in wanted_gene_prefix:
@@ -129,31 +162,34 @@ def rel_charge_df(df, col_suffixes, chain_types):
     #making smaller df with only needed information 
     wanted_cols = [f"{chain}_{col}" for chain in chain_types for col in col_suffixes]
     wanted_df = df[wanted_cols]
+    #replacing gene columns with one cdr3 column where genes for a cells chain are one string. 
     formating.combine_cdr3_genes(wanted_df, chain_types)
     needed_ends = ['cdr3_genes']
     for end in col_suffixes: 
         if not end.endswith('gene'): needed_ends.append(end)
     needed_cols = [f"{chain}_{end}" for chain in chain_types for end in needed_ends]
-    charges_df = wanted_df[needed_cols].copy()
+    charges_df = wanted_df[needed_cols].copy() #to prevent SettingWithCopyWarning from dropna(inplace=True)
     cdr3_names = [f"{chain}_cdr3_genes" for chain in chain_types]
-    combined_igh, combined_iglk = all_heavyLight_genes([charges_df], cdr3_names)
-    rel_abund_df = relative_abundance_df(charges_df, ['cdr3_genes'], chain_types, combined_igh if 'IGH' in chain_types else combined_iglk)
-    if len(chain_types) == 2: 
+    prefix = chain_types[0]
+    if len(chain_types) == 2: #if want to analyze all light chains need to reformat df so it still has only 3 columns 
         type1_cols = [f"{chain_types[0]}_{end}" for end in needed_ends]
         type1_df = charges_df[type1_cols].rename(columns={col: f"light_{col[4:]}" for col in type1_cols})
         type2_cols = [f"{chain_types[1]}_{end}" for end in needed_ends]
         type2_df = charges_df.drop(type1_cols, axis=1).rename(columns={col: f"light_{col[4:]}" for col in type2_cols})
-        charges_df = pd.concat([type1_df, type2_df], ignore_index=True)#.drop(['index'], axis=1)
-        chain_types = ['light']
+        charges_df = pd.concat([type1_df, type2_df], ignore_index=True)
+        prefix = 'light'
         cdr3_names = 'light_cdr3_genes'
     else: cdr3_names = cdr3_names[0]
-    charges_df.dropna(subset=[f"{chain}_cdr3_pKa" for chain in chain_types], inplace=True)
+    charges_df.dropna(subset=[f"{prefix}_cdr3_pKa"], inplace=True)
+    #preparing to make output df 
     cdr3_genes = []
     cdr3_pKa_total = []
     R_count_total = []
     grouped = charges_df.groupby(by=cdr3_names)
-    prefix = chain_types[0]
-    for gene_names in rel_abund_df.index.astype(str): 
+    #getting relative abundance to add to output df 
+    combined_igh, combined_iglk = all_heavyLight_genes([charges_df], cdr3_names)
+    rel_abund_df = relative_abundance_df(charges_df, ['cdr3_genes'], chain_types, combined_igh if 'IGH' in chain_types else combined_iglk)
+    for gene_names in rel_abund_df.index.astype(str): #want df to be in the same format so merging the dfs is easy 
         cdr3_genes.append(gene_names)
         cdr3_pKa_total.append(grouped.get_group(gene_names)[f"{prefix}_cdr3_pKa"].sum())
         R_count_total.append(grouped.get_group(gene_names)[f"{prefix}_R_count"].sum())
@@ -166,27 +202,36 @@ def rel_charge_df(df, col_suffixes, chain_types):
     return output_df
 
 #function for t-test USE FOR COMPAIRING NORMALIZED ABUNDANCE OF LIGHT CHAINS BETWEEN HEALTHY AND SLE
-def t_test(healthy_list, sick_list, all_genes_considered):
+def t_test(healthy_list, sick_list, all_genes_considered, rel_freq_col_name):
+    '''
+    Inputs: 
+        healthy_list: list of all the dataframes that contain information about healthy subject files with relative frequency columns. 
+                    for example outputs of analysis.rel_charge_df() or analysis.relative_abundance_df(). 
+        sick_list: same has healthy_list but for the files of sick subjects. 
+        all_genes_considered: list of all genes to consider. usualy all_igh or all_iglk but also can be list of combined_cdr3 genes for heavy or light chains depends on what data you are looking at. 
+        rel_freq_col_name: name of the column of the realitivy frequency of the thing to be analyzed. Must match name in dataframes.
+    Output: 
+        new dataframe with a row for each gene in all_genes_considered and the following columns: Genes, Equal Population Variance t_stats, and Equal Population Variance p_values
+    '''
     equal_pop_var_pvals = []
     equal_pop_var_tstats = []
-    welch_p_values = []
-    welch_t_stats = []
     for gene in all_genes_considered:
-        hcds = [healthy_list[i].loc[gene]['rel_freq'] for i in range(len(healthy_list))]
-        sles = [sick_list[i].loc[gene]['rel_freq'] for i in range(len(sick_list))]
+        hcds = [healthy_list[i].loc[gene][rel_freq_col_name] for i in range(len(healthy_list))]
+        sles = [sick_list[i].loc[gene][rel_freq_col_name] for i in range(len(sick_list))]
         (et_stat, ep_val) = ttest_ind(hcds, sles)
         equal_pop_var_pvals.append(ep_val)
         equal_pop_var_tstats.append(et_stat)
-        (wt_stat, wp_val) = ttest_ind(hcds, sles, equal_var=False)
-        welch_p_values.append(wp_val) #YOU HAVE 3 DATA POINTS PER ARRAY ASSUME IT IS NORMAL DISTRIBUTION DO NOT NEED THIS!
-        welch_t_stats.append(wt_stat)
-    return pd.DataFrame({"Gene": all_genes_considered, "Equal Population Variance t_stats":equal_pop_var_tstats, "Equal Population Variance p_values":equal_pop_var_pvals, "Welch t_stats":welch_t_stats, "Welch p_values":welch_p_values})
+    return pd.DataFrame({"Gene": all_genes_considered, "Equal Population Variance t_stats":equal_pop_var_tstats, "Equal Population Variance p_values":equal_pop_var_pvals})
 
 #t-test USE FOR PAIRS OF LIGHT AND HEAVY CHAINS
 def normalize_pairMatrix(pairMatrix_df):
+    '''Function to take a given inputed matrix shaped df and output a normalized matrix.'''
     return pairMatrix_df.div(pairMatrix_df.sum(axis=1), axis=0)
 
 def t_test_matrix(healthyPairM_list, sickPairM_list, all_igh, all_iglk):
+    '''
+    Does everything like t_test except for matrix inputs and outputs a matrix with the t_test values for each heavy and light gene pair. 
+    '''
     for index in range(len(healthyPairM_list)): 
         if (healthyPairM_list[index].iloc[0].sum() > 1):
             healthyPairM_list[index] = normalize_pairMatrix(healthyPairM_list[index])
@@ -210,6 +255,17 @@ def t_test_matrix(healthyPairM_list, sickPairM_list, all_igh, all_iglk):
 
 #function for bionomial distribution FOR LIGHT CHAINS AND R STUFF
 def binomalDist(iglk_hRcount_df, sucess_colName, total_colName, sucessP_colName):
+    '''
+    Inputs: 
+        iglk_hRcount_df: dataframe with two different relative populations for each grouping. 
+                        For example for each light chain gene the relative freqency or pairs heavy chains that have Rcounts == 0 and Rcounts > 0. 
+        sucess_colName: EXACT name of the success column in the dataframe. For example: "Rcount_gt_0"
+        total_colName: EXACT name of the column in dataframe which has the total number of observations in any group. 
+                      For example: "total" which the the column that has the total number of times a specific light chain is observed. 
+        sucessP_colName: EXACT name of the column with the relative frequency of the sucess column. For example: "R_gt_0_freq"
+    Ouput: 
+        new dataframe with an additional column for the Binomial Distribution survival function value for the information inputed. 
+    '''
     p = np.nanmean(iglk_hRcount_df[sucessP_colName].values)/100 #probability of success on a given trial (average of R_equal_0_freq)
     bino_dists = [] #Survival function outputs or 1-cdf 
     for index, row in iglk_hRcount_df.iterrows(): 
